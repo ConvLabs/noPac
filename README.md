@@ -16,6 +16,6 @@ Patch your Domain Controllers!
 
 ## Credits
 
-[cube0x0](https://twitter.com/cube0x0) for the original noPac code
+[cube0x0](https://twitter.com/cube0x0) for the [original noPac](https://github.com/cube0x0/noPac) code
 
 [Charlie Clark](https://twitter.com/exploitph) for his Rubeus fork and [Kevin Robertson](https://twitter.com/kevin_robertson) for SharpMad
